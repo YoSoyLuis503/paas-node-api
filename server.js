@@ -90,6 +90,21 @@ app.get('/api/health', async (req, res) => {
     });
 });
 
+// Endpoint de prueba de carga y estrés CPU para HPA
+app.get('/api/stress', (req, res) => {
+    const start = Date.now();
+    let sum = 0;
+    for (let i = 0; i < 2000000; i++) {
+        sum += Math.sqrt(i) * Math.sin(i);
+    }
+    res.json({
+        success: true,
+        pod: os.hostname(),
+        duration_ms: Date.now() - start,
+        timestamp: new Date().toISOString()
+    });
+});
+
 // Listar todos los servicios cloud (GET)
 app.get('/api/servicios', async (req, res) => {
     try {
@@ -242,10 +257,13 @@ app.get('/', (req, res) => {
                     </span>
                 </div>
                 <div class="card-glass px-3 py-2 rounded-xl text-right">
-                    <span class="block text-[10px] text-[#C1C0C2] uppercase mono">IP Pública (Salida WAN)</span>
-                    <span class="mono text-xs font-semibold text-[#ECC5C6] block">
-                        <i class="fa-solid fa-globe text-[10px] mr-1"></i><span id="publicIpDisplay">138.97.141.119</span>
-                    </span>
+                    <span class="block text-[10px] text-[#C1C0C2] uppercase mono">Acceso Público HTTPS</span>
+                    <a href="https://commit-sell-revolution-desirable.trycloudflare.com" target="_blank"
+                        class="mono text-xs font-semibold text-[#ECC5C6] hover:underline flex items-center justify-end gap-1 block" title="Túnel Cloudflare Público con Candado SSL Activo">
+                        <i class="fa-solid fa-lock text-emerald-400 text-[10px]"></i>
+                        <span class="truncate max-w-[190px]">trycloudflare.com</span>
+                        <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
+                    </a>
                 </div>
                 <div class="card-glass px-3 py-2 rounded-xl text-right">
                     <span class="block text-[10px] text-[#C1C0C2] uppercase mono">Pod Kubernetes</span>
@@ -303,6 +321,9 @@ app.get('/', (req, res) => {
             <div class="flex items-center gap-2">
                 <button onclick="cargarServicios()" class="bg-[#181b20] hover:bg-[#282d37] border border-[#282d37] px-3.5 py-2 rounded-xl text-xs mono font-semibold flex items-center gap-1.5 transition">
                     <i class="fa-solid fa-rotate text-[#8A9DB1]"></i> Refrescar API
+                </button>
+                <button onclick="abrirModalEstres()" class="bg-[#ECC5C6]/15 hover:bg-[#ECC5C6]/25 text-[#ECC5C6] border border-[#ECC5C6]/30 px-3.5 py-2 rounded-xl text-xs mono font-semibold flex items-center gap-1.5 transition shadow-sm">
+                    <i class="fa-solid fa-bolt-lightning text-amber-400"></i> Generar Tráfico (HPA)
                 </button>
                 <button onclick="toggleJsonView()" class="bg-[#181b20] hover:bg-[#282d37] text-[#C1C0C2] border border-[#282d37] px-3.5 py-2 rounded-xl text-xs mono flex items-center gap-1.5 transition">
                     <i class="fa-solid fa-code text-[#ECC5C6]"></i> Inspeccionar JSON REST
@@ -566,17 +587,78 @@ app.get('/', (req, res) => {
             document.getElementById('modalCrear').classList.remove('hidden');
         }
 
-        function cerrarModal(id) {
-            document.getElementById(id).classList.add('hidden');
+        function abrirModalEstres() {
+            document.getElementById('modalEstres').classList.remove('hidden');
+            document.getElementById('estresBar').style.width = '0%';
+            document.getElementById('estresCount').innerText = '0 / 60';
+            document.getElementById('estresStatus').innerText = 'Listo para iniciar ráfaga...';
+            document.getElementById('btnLanzarEstres').disabled = false;
+        }
+
+        function cerrarModalEstres() {
+            document.getElementById('modalEstres').classList.add('hidden');
+        }
+
+        async function dispararCargaEstres() {
+            const btn = document.getElementById('btnLanzarEstres');
+            btn.disabled = true;
+            document.getElementById('estresStatus').innerText = '⚡ Inyectando ráfaga concurrente a los pods...';
+            const total = 60;
+            let completadas = 0;
+            const promesas = [];
+
+            for (let i = 0; i < total; i++) {
+                promesas.push(
+                    fetch('/api/stress')
+                        .then(r => r.json())
+                        .catch(() => ({}))
+                        .finally(() => {
+                            completadas++;
+                            const pct = Math.round((completadas / total) * 100);
+                            document.getElementById('estresBar').style.width = pct + '%';
+                            document.getElementById('estresCount').innerText = `${completadas} / ${total}`;
+                        })
+                );
+            }
+
+            await Promise.all(promesas);
+            document.getElementById('estresStatus').innerText = '✅ Ráfaga completada. Carga de CPU inyectada con éxito.';
+            btn.disabled = false;
         }
 
         // Carga inicial
         cargarServicios();
+    </script>
 
-        fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(2000) })
-            .then(r => r.json())
-            .then(d => { if (d && d.ip) document.getElementById('publicIpDisplay').innerText = d.ip; })
-            .catch(() => {});
+    <!-- Modal Simulación de Carga / Estrés HPA -->
+    <div id="modalEstres" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="card-glass rounded-2xl max-w-md w-full p-6 border border-[#282d37] space-y-4">
+            <div class="flex items-center justify-between border-b border-[#282d37] pb-3">
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-bolt-lightning text-amber-400"></i> Generador de Carga CPU / Tráfico
+                </h3>
+                <button type="button" onclick="cerrarModalEstres()" class="text-[#C1C0C2] hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p class="text-xs text-[#C1C0C2] leading-relaxed">
+                Este módulo dispara ráfagas de cálculo concurrentes a los pods de Node.js en Kubernetes para forzar el aumento de carga de CPU y disparar el escalado horizontal (HPA) visible en Grafana.
+            </p>
+            <div class="bg-[#121417] p-3.5 rounded-xl border border-[#282d37] space-y-2">
+                <div class="flex justify-between text-xs mono">
+                    <span id="estresStatus" class="text-white">Listo para iniciar ráfaga...</span>
+                    <span id="estresCount" class="text-[#8A9DB1] font-bold">0 / 60</span>
+                </div>
+                <div class="w-full bg-[#181b20] h-2.5 rounded-full overflow-hidden border border-[#282d37]">
+                    <div id="estresBar" class="bg-gradient-to-r from-amber-400 via-rose-400 to-[#ECC5C6] h-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button" onclick="cerrarModalEstres()" class="px-4 py-2 rounded-xl border border-[#282d37] text-xs mono text-[#C1C0C2] hover:bg-[#282d37]">Cerrar</button>
+                <button id="btnLanzarEstres" type="button" onclick="dispararCargaEstres()" class="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-[#121417] font-bold text-xs mono flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-play"></i> Iniciar Ráfaga (60 reqs)
+                </button>
+            </div>
+        </div>
+    </div>
     </script>
 </body>
 </html>`;
