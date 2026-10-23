@@ -616,7 +616,7 @@ app.get('/', (req, res) => {
                             completadas++;
                             const pct = Math.round((completadas / total) * 100);
                             document.getElementById('estresBar').style.width = pct + '%';
-                            document.getElementById('estresCount').innerText = `${completadas} / ${total}`;
+                            document.getElementById('estresCount').innerText = completadas + ' / ' + total;
                         })
                 );
             }
