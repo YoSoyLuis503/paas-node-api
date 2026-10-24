@@ -20,7 +20,7 @@ app.use((req, res, next) => {
 
 const dbConfig = {
     host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT, 10),
+    port: parseInt(process.env.DB_PORT, 10) || 5432,
     database: process.env.DB_NAME,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -31,7 +31,7 @@ const dbConfig = {
 
 const pool = new Pool(dbConfig);
 
-// Inicialización de la tabla en PostgreSQL si no existe
+// Inicialización de la tabla en PostgreSQL
 async function initDatabase() {
     try {
         await pool.query(`
@@ -54,7 +54,7 @@ initDatabase();
 // 1. ENDPOINTS API RESTful (Rúbrica Parcial 2 - App 2)
 // ==============================================================================
 
-// Health Check & Diagnóstico de Infraestructura
+// Health Check & Diagnóstico
 app.get('/api/health', async (req, res) => {
     let dbStatus = 'OFFLINE';
     let dbVersion = null;
@@ -90,7 +90,7 @@ app.get('/api/health', async (req, res) => {
     });
 });
 
-// Endpoint de prueba de carga y estrés CPU para HPA
+// Prueba de estrés para activar HPA
 app.get('/api/stress', (req, res) => {
     const start = Date.now();
     let sum = 0;
@@ -105,7 +105,7 @@ app.get('/api/stress', (req, res) => {
     });
 });
 
-// Listar todos los servicios cloud (GET)
+// Listar servicios (GET)
 app.get('/api/servicios', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT * FROM servicios_cloud ORDER BY id DESC;');
@@ -120,82 +120,67 @@ app.get('/api/servicios', async (req, res) => {
     }
 });
 
-// Crear nuevo servicio cloud (POST)
+// Registrar servicio (POST)
 app.post('/api/servicios', async (req, res) => {
     const { nombre, tipo, estado } = req.body;
     if (!nombre || !tipo) {
-        return res.status(400).json({ success: false, error: 'Los campos nombre y tipo son obligatorios.' });
+        return res.status(400).json({ success: false, error: 'Nombre y tipo son obligatorios.' });
     }
 
     try {
-        const query = 'INSERT INTO servicios_cloud (nombre, tipo, estado) VALUES ($1, $2, $3) RETURNING *;';
-        const values = [nombre.trim(), tipo.trim(), (estado || 'Activo').trim()];
-        const { rows } = await pool.query(query, values);
+        const result = await pool.query(
+            'INSERT INTO servicios_cloud (nombre, tipo, estado) VALUES ($1, $2, $3) RETURNING *;',
+            [nombre.trim(), tipo.trim(), estado || 'Activo']
+        );
         res.status(201).json({
             success: true,
-            message: 'Servicio registrado exitosamente.',
-            data: rows[0]
+            message: 'Servicio registrado con éxito.',
+            data: result.rows[0]
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Actualizar servicio cloud (PUT)
+// Alternar o actualizar estado (PUT)
 app.put('/api/servicios/:id', async (req, res) => {
     const id = parseInt(req.params.id, 10);
-    const { nombre, tipo, estado } = req.body;
-
-    if (isNaN(id) || !nombre || !tipo) {
-        return res.status(400).json({ success: false, error: 'Parámetros inválidos.' });
-    }
+    const { estado } = req.body;
 
     try {
-        const query = 'UPDATE servicios_cloud SET nombre = $1, tipo = $2, estado = $3 WHERE id = $4 RETURNING *;';
-        const values = [nombre.trim(), tipo.trim(), (estado || 'Activo').trim(), id];
-        const { rows } = await pool.query(query, values);
-
-        if (rows.length === 0) {
+        const result = await pool.query(
+            'UPDATE servicios_cloud SET estado = $1 WHERE id = $2 RETURNING *;',
+            [estado, id]
+        );
+        if (result.rowCount === 0) {
             return res.status(404).json({ success: false, error: 'Servicio no encontrado.' });
         }
-
-        res.json({
-            success: true,
-            message: 'Servicio actualizado correctamente.',
-            data: rows[0]
-        });
+        res.json({ success: true, data: result.rows[0] });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Eliminar servicio cloud (DELETE)
+// Eliminar servicio (DELETE)
 app.delete('/api/servicios/:id', async (req, res) => {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
-        return res.status(400).json({ success: false, error: 'ID inválido.' });
-    }
-
     try {
-        const { rowCount } = await pool.query('DELETE FROM servicios_cloud WHERE id = $1;', [id]);
-        if (rowCount === 0) {
+        const result = await pool.query('DELETE FROM servicios_cloud WHERE id = $1;', [id]);
+        if (result.rowCount === 0) {
             return res.status(404).json({ success: false, error: 'Servicio no encontrado.' });
         }
-        res.json({
-            success: true,
-            message: `Servicio #${id} eliminado correctamente.`
-        });
+        res.json({ success: true, message: `Servicio #${id} eliminado.` });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Poblado de demostración inicial (POST /api/servicios/seed)
-app.post('/api/servicios/seed', async (req, res) => {
+// Restablecer datos seed
+app.post('/api/seed', async (req, res) => {
     try {
         await pool.query('TRUNCATE TABLE servicios_cloud RESTART IDENTITY;');
         await pool.query(`
-            INSERT INTO servicios_cloud (nombre, tipo, estado) VALUES
+            INSERT INTO servicios_cloud (nombre, tipo, estado) VALUES 
             ('Auth Service (JWT)', 'Microservicio', 'Activo'),
             ('Queue Worker Redis', 'Worker', 'En espera'),
             ('API Gateway Ingress', 'Networking', 'Activo'),
@@ -209,7 +194,7 @@ app.post('/api/servicios/seed', async (req, res) => {
 });
 
 // ==============================================================================
-// 2. FRONTEND SPA MODERNO (Consumo de la API RESTful en vivo)
+// 2. FRONTEND SPA: CLIENTE REAL MODERNO (SaaS Platform)
 // ==============================================================================
 app.get('/', (req, res) => {
     const podName = os.hostname();
@@ -218,447 +203,426 @@ app.get('/', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PaaS App 2 | Node.js REST API + PostgreSQL</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Alquimia Cloud | Hub de Microservicios</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'IBM Plex Sans', sans-serif; background-color: #121417; color: #F5E9E7; }
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+        body { font-family: 'IBM Plex Sans', sans-serif; background-color: #0c0e12; color: #f3f4f6; }
         .mono { font-family: 'JetBrains Mono', monospace; }
-        .card-glass { background-color: #181b20; border: 1px solid #282d37; }
-        .badge-pill { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.6rem; border-radius: 9999px; font-size: 0.72rem; font-family: 'JetBrains Mono', monospace; }
+        .card-surface { background-color: #14171f; border: 1px solid #202633; }
+        .card-surface:hover { border-color: #2e3648; }
+        .table-row-hover:hover { background-color: #181c26; }
     </style>
 </head>
-<body class="min-h-screen p-4 sm:p-6 lg:p-8">
+<body class="min-h-screen flex flex-col">
 
-    <div class="max-w-6xl mx-auto space-y-6">
-
-        <!-- Top Header & Banner de Gobernanza PaaS -->
-        <header class="card-glass rounded-2xl p-5 sm:p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div class="flex items-center gap-4">
-                <div class="w-12 h-12 rounded-xl bg-[#8A9DB1]/20 border border-[#8A9DB1]/40 flex items-center justify-center text-[#8A9DB1] text-2xl">
-                    <i class="fa-brands fa-node-js"></i>
+    <!-- Navbar Superior Profesional -->
+    <header class="border-b border-[#202633] bg-[#0f1218] sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+            <!-- Brand / Logo Real -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-bold text-lg shadow-sm">
+                    <i class="fa-solid fa-cloud-bolt"></i>
                 </div>
                 <div>
                     <div class="flex items-center gap-2">
-                        <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">Catálogo de Microservicios Cloud</h1>
-                        <span class="badge-pill bg-[#8A9DB1]/20 text-[#8A9DB1] border border-[#8A9DB1]/30">Stack Moderno #2</span>
+                        <span class="text-base font-bold tracking-tight text-white">ALQUIMIA CLOUD</span>
+                        <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">API Hub v3.1</span>
                     </div>
-                    <p class="text-xs text-[#C1C0C2] mt-0.5">API RESTful en Node.js 20 (Express) conectada a PostgreSQL 15 administrada en PaaS (Tenant: <span class="mono text-white font-semibold">alquimia</span>)</p>
+                    <span class="text-xs text-gray-400">Plataforma de Gestión de Microservicios & API REST</span>
                 </div>
             </div>
 
-            <!-- Auditoría de Red, Pod & Réplicas en vivo -->
-            <div class="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
-                <div class="card-glass px-3 py-2 rounded-xl text-right">
-                    <span class="block text-[10px] text-[#C1C0C2] uppercase mono">IP Local (Clúster / VM)</span>
-                    <span class="mono text-xs font-semibold text-[#8A9DB1] block">
-                        <i class="fa-solid fa-network-wired text-[10px] mr-1"></i>192.168.88.128
-                    </span>
+            <!-- Acciones Rápidas -->
+            <div class="flex items-center gap-3">
+                <div id="dbStatusPill" class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-xs text-emerald-400 font-mono">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>PostgreSQL 15 Conectado</span>
                 </div>
-                <div class="card-glass px-3 py-2 rounded-xl text-right">
-                    <span class="block text-[10px] text-[#C1C0C2] uppercase mono">Acceso Público HTTPS</span>
-                    <a href="https://commit-sell-revolution-desirable.trycloudflare.com" target="_blank"
-                        class="mono text-xs font-semibold text-[#ECC5C6] hover:underline flex items-center justify-end gap-1 block" title="Túnel Cloudflare Público con Candado SSL Activo">
-                        <i class="fa-solid fa-lock text-emerald-400 text-[10px]"></i>
-                        <span class="truncate max-w-[190px]">trycloudflare.com</span>
-                        <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
-                    </a>
-                </div>
-                <div class="card-glass px-3 py-2 rounded-xl text-right">
-                    <span class="block text-[10px] text-[#C1C0C2] uppercase mono">Pod Kubernetes</span>
-                    <span class="mono text-xs font-semibold text-white truncate max-w-[170px] block" title="${podName}">
-                        <i class="fa-solid fa-cube text-[10px] mr-1"></i>${podName}
-                    </span>
-                </div>
-                <div class="card-glass px-3 py-2 rounded-xl text-right">
-                    <span class="block text-[10px] text-[#C1C0C2] uppercase mono">PostgreSQL 15</span>
-                    <span id="dbBadge" class="badge-pill bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> ONLINE
-                    </span>
-                </div>
-            </div>
-        </header>
 
-        <!-- Banner de Variables de Entorno (Evidencia para Rúbrica) -->
-        <section class="card-glass rounded-2xl p-4 sm:p-5 text-xs">
-            <div class="flex items-center justify-between mb-3 border-b border-[#282d37] pb-2">
-                <span class="font-bold text-[#C1C0C2] uppercase tracking-wider mono flex items-center gap-2">
-                    <i class="fa-solid fa-shield-halved text-[#8A9DB1]"></i> Bóveda de Variables de Entorno Seguras (12-Factor App)
-                </span>
-                <span class="text-[11px] text-[#8A9DB1] mono">Sin credenciales expuestas en repositorio Git</span>
-            </div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mono">
-                <div class="bg-[#121417] p-2.5 rounded-lg border border-[#282d37]">
-                    <span class="text-[10px] text-[#C1C0C2] block">DB_HOST</span>
-                    <span class="text-white font-semibold truncate block" title="${dbConfig.host}">${dbConfig.host}</span>
-                </div>
-                <div class="bg-[#121417] p-2.5 rounded-lg border border-[#282d37]">
-                    <span class="text-[10px] text-[#C1C0C2] block">DB_PORT</span>
-                    <span class="text-white font-semibold block">${dbConfig.port}</span>
-                </div>
-                <div class="bg-[#121417] p-2.5 rounded-lg border border-[#282d37]">
-                    <span class="text-[10px] text-[#C1C0C2] block">DB_NAME</span>
-                    <span class="text-white font-semibold block">${dbConfig.database}</span>
-                </div>
-                <div class="bg-[#121417] p-2.5 rounded-lg border border-[#282d37]">
-                    <span class="text-[10px] text-[#C1C0C2] block">DB_USER</span>
-                    <span class="text-white font-semibold block">${dbConfig.user}</span>
-                </div>
-                <div class="bg-[#121417] p-2.5 rounded-lg border border-[#282d37]">
-                    <span class="text-[10px] text-[#C1C0C2] block">DB_PASSWORD</span>
-                    <span class="text-[#ECC5C6] font-semibold block">••••••••••••</span>
-                </div>
-                <div class="bg-[#121417] p-2.5 rounded-lg border border-[#282d37]">
-                    <span class="text-[10px] text-[#C1C0C2] block">PORT</span>
-                    <span class="text-[#8A9DB1] font-semibold block">${port}</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- Barra de Herramientas y Acciones API -->
-        <div class="card-glass rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div class="flex items-center gap-2">
-                <button onclick="cargarServicios()" class="bg-[#181b20] hover:bg-[#282d37] border border-[#282d37] px-3.5 py-2 rounded-xl text-xs mono font-semibold flex items-center gap-1.5 transition">
-                    <i class="fa-solid fa-rotate text-[#8A9DB1]"></i> Refrescar API
-                </button>
-                <button onclick="abrirModalEstres()" class="bg-[#ECC5C6]/15 hover:bg-[#ECC5C6]/25 text-[#ECC5C6] border border-[#ECC5C6]/30 px-3.5 py-2 rounded-xl text-xs mono font-semibold flex items-center gap-1.5 transition shadow-sm">
-                    <i class="fa-solid fa-bolt-lightning text-amber-400"></i> Generar Tráfico (HPA)
-                </button>
-                <button onclick="toggleJsonView()" class="bg-[#181b20] hover:bg-[#282d37] text-[#C1C0C2] border border-[#282d37] px-3.5 py-2 rounded-xl text-xs mono flex items-center gap-1.5 transition">
-                    <i class="fa-solid fa-code text-[#ECC5C6]"></i> Inspeccionar JSON REST
-                </button>
-            </div>
-
-            <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
-                <button onclick="restablecerSeed()" class="bg-[#181b20] hover:bg-[#282d37] text-[#C1C0C2] border border-[#282d37] px-3.5 py-2 rounded-xl text-xs mono flex items-center gap-1.5 transition">
-                    <i class="fa-solid fa-rotate-left"></i> Restablecer Seed
-                </button>
-                <button onclick="abrirModalCrear()" class="bg-[#8A9DB1] hover:bg-[#9ab0c5] text-[#121417] font-bold px-4 py-2 rounded-xl text-xs mono flex items-center gap-2 shadow-sm transition">
-                    <i class="fa-solid fa-plus"></i> Nuevo Servicio REST
+                <button onclick="abrirModalNuevo()" class="bg-cyan-500 hover:bg-cyan-600 text-gray-950 font-bold px-4 py-2 rounded-xl text-xs transition flex items-center gap-2 shadow-sm">
+                    <i class="fa-solid fa-plus text-xs"></i>
+                    <span>Nuevo Servicio</span>
                 </button>
             </div>
         </div>
+    </header>
 
-        <!-- Visor de Payload JSON en Vivo (Ocultable) -->
-        <div id="jsonContainer" class="card-glass rounded-2xl p-4 hidden">
-            <div class="flex items-center justify-between pb-2 mb-2 border-b border-[#282d37]">
-                <span class="mono text-xs font-bold text-[#ECC5C6] flex items-center gap-2">
-                    <i class="fa-solid fa-terminal"></i> Salida Cruda de la API (GET /api/servicios)
-                </span>
-                <span class="mono text-[10px] text-[#C1C0C2]">Content-Type: application/json</span>
+    <!-- Contenido Principal -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        <!-- Métricas Rápidas del SaaS -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="card-surface rounded-2xl p-5 shadow-sm">
+                <div class="flex items-center justify-between text-gray-400 text-xs font-medium">
+                    <span>Microservicios Registrados</span>
+                    <i class="fa-solid fa-layer-group text-gray-500"></i>
+                </div>
+                <div class="mt-2 flex items-baseline justify-between">
+                    <span id="statTotal" class="text-2xl font-bold text-white mono">0</span>
+                    <span class="text-xs text-gray-400">Total en clúster</span>
+                </div>
             </div>
-            <pre id="jsonViewer" class="mono text-xs bg-[#121417] p-3 rounded-xl border border-[#282d37] overflow-x-auto text-[#8A9DB1] max-h-60"></pre>
+
+            <div class="card-surface rounded-2xl p-5 shadow-sm">
+                <div class="flex items-center justify-between text-gray-400 text-xs font-medium">
+                    <span>Servicios Activos</span>
+                    <i class="fa-solid fa-circle-check text-gray-500"></i>
+                </div>
+                <div class="mt-2 flex items-baseline justify-between">
+                    <span id="statActive" class="text-2xl font-bold text-emerald-400 mono">0</span>
+                    <span class="text-xs text-gray-400">En producción</span>
+                </div>
+            </div>
+
+            <div class="card-surface rounded-2xl p-5 shadow-sm">
+                <div class="flex items-center justify-between text-gray-400 text-xs font-medium">
+                    <span>Latencia Base de Datos</span>
+                    <i class="fa-solid fa-stopwatch text-gray-500"></i>
+                </div>
+                <div class="mt-2 flex items-baseline justify-between">
+                    <span id="statLatency" class="text-2xl font-bold text-cyan-400 mono">-- ms</span>
+                    <span class="text-xs text-gray-400">Query ping</span>
+                </div>
+            </div>
+
+            <div class="card-surface rounded-2xl p-5 shadow-sm">
+                <div class="flex items-center justify-between text-gray-400 text-xs font-medium">
+                    <span>Protocolo de Intercambio</span>
+                    <i class="fa-solid fa-code text-gray-500"></i>
+                </div>
+                <div class="mt-2 flex items-baseline justify-between">
+                    <span class="text-base font-bold text-white mono">RESTful / JSON</span>
+                    <span class="text-xs text-cyan-400 font-mono">Express 4</span>
+                </div>
+            </div>
         </div>
 
-        <!-- Tabla de Microservicios -->
-        <div class="card-glass rounded-2xl overflow-hidden shadow-xl">
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-sm">
-                    <thead class="bg-[#121417] text-[#C1C0C2] uppercase text-[11px] mono border-b border-[#282d37]">
-                        <tr>
-                            <th class="py-3.5 px-4 font-semibold">ID</th>
-                            <th class="py-3.5 px-4 font-semibold">Microservicio / Recurso</th>
-                            <th class="py-3.5 px-4 font-semibold">Tipo</th>
-                            <th class="py-3.5 px-4 font-semibold">Estado</th>
-                            <th class="py-3.5 px-4 font-semibold">Registrado</th>
-                            <th class="py-3.5 px-4 font-semibold text-right">Acciones REST</th>
-                        </tr>
-                    </thead>
-                    <tbody id="serviciosTbody" class="divide-y divide-[#282d37]/60">
-                        <tr>
-                            <td colspan="6" class="py-8 text-center text-[#C1C0C2] mono">
-                                <i class="fa-solid fa-spinner fa-spin mr-2"></i> Cargando microservicios desde PostgreSQL...
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+        <!-- Layout Dividido: Tabla de Servicios + Explorador REST API Interactivo -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+            <!-- Columna Izquierda: Tabla de Servicios (8 columnas) -->
+            <div class="lg:col-span-8 space-y-4">
+                <div class="card-surface rounded-2xl overflow-hidden shadow-sm">
+                    <div class="p-4 border-b border-[#202633] flex items-center justify-between gap-3">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-microchip text-cyan-400 text-sm"></i>
+                            <h2 class="text-sm font-bold text-white">Catálogo de Microservicios</h2>
+                        </div>
+                        <button onclick="cargarServicios()" class="text-xs text-gray-400 hover:text-white flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#1c212c]">
+                            <i class="fa-solid fa-arrows-rotate text-xs"></i>
+                            <span>Refrescar</span>
+                        </button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr class="border-b border-[#202633] bg-[#0f1218] text-gray-400 uppercase tracking-wider font-mono text-[11px]">
+                                    <th class="py-3 px-4 font-semibold">ID</th>
+                                    <th class="py-3 px-4 font-semibold">Servicio</th>
+                                    <th class="py-3 px-4 font-semibold">Tipo</th>
+                                    <th class="py-3 px-4 font-semibold">Estado</th>
+                                    <th class="py-3 px-4 text-right font-semibold">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="servicesTableBody" class="divide-y divide-[#202633]">
+                                <tr>
+                                    <td colspan="5" class="py-8 text-center text-gray-400">Cargando servicios desde PostgreSQL...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
+
+            <!-- Columna Derecha: Explorador Interactivo de la REST API (4 columnas) -->
+            <div class="lg:col-span-4 space-y-4">
+                <div class="card-surface rounded-2xl p-5 shadow-sm space-y-3.5">
+                    <div class="flex items-center justify-between pb-2 border-b border-[#202633]">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-terminal text-cyan-400"></i>
+                            <h3 class="text-xs font-bold text-white uppercase tracking-wider">Explorador REST API</h3>
+                        </div>
+                        <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400">JSON Response</span>
+                    </div>
+
+                    <p class="text-[11px] text-gray-400 leading-relaxed">
+                        Prueba en vivo los endpoints RESTful expuestos por Node.js consumiendo la base de datos PostgreSQL:
+                    </p>
+
+                    <div class="flex flex-col gap-2">
+                        <button onclick="probarEndpoint('/api/servicios', 'GET')" class="w-full text-left bg-[#101217] hover:bg-[#1a1f29] border border-[#202633] p-2.5 rounded-xl transition flex items-center justify-between text-xs mono">
+                            <span class="flex items-center gap-2">
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">GET</span>
+                                <span class="text-gray-300">/api/servicios</span>
+                            </span>
+                            <i class="fa-solid fa-play text-gray-500 text-[10px]"></i>
+                        </button>
+
+                        <button onclick="probarEndpoint('/api/health', 'GET')" class="w-full text-left bg-[#101217] hover:bg-[#1a1f29] border border-[#202633] p-2.5 rounded-xl transition flex items-center justify-between text-xs mono">
+                            <span class="flex items-center gap-2">
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">GET</span>
+                                <span class="text-gray-300">/api/health</span>
+                            </span>
+                            <i class="fa-solid fa-play text-gray-500 text-[10px]"></i>
+                        </button>
+                    </div>
+
+                    <!-- Consola de Respuesta JSON en Vivo -->
+                    <div class="space-y-1">
+                        <span class="text-[10px] text-gray-400 mono">Respuesta en Vivo (Status 200 OK):</span>
+                        <pre id="apiConsoleOutput" class="p-3 bg-[#0a0c10] border border-[#202633] rounded-xl text-[11px] mono text-cyan-300 overflow-x-auto max-h-56 leading-relaxed">// Haz clic en uno de los endpoints para consultar en vivo...</pre>
+                    </div>
+
+                    <div class="pt-2">
+                        <button onclick="restablecerDemo()" class="w-full bg-[#181c26] hover:bg-[#202634] text-gray-400 hover:text-white border border-[#202633] py-2 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>Restablecer Servicios Demo</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
         </div>
 
-        <!-- Footer Informativo para el Parcial -->
-        <footer class="text-center text-xs text-[#C1C0C2] pt-4 border-t border-[#282d37]/50 mono">
-            Informática en la Nube • Parcial 2 (Cómputo 2) • Aplicación 2 (Stack Moderno Node.js 20 + PostgreSQL 15)
-        </footer>
+    </main>
 
-    </div>
-
-    <!-- Modal Crear Servicio -->
-    <div id="modalCrear" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
-        <div class="card-glass rounded-2xl max-w-md w-full p-6 shadow-2xl border border-[#282d37] space-y-4">
-            <div class="flex items-center justify-between border-b border-[#282d37] pb-3">
-                <h3 class="text-base font-bold text-white flex items-center gap-2">
-                    <i class="fa-solid fa-plus-circle text-[#8A9DB1]"></i> Registrar Microservicio en PostgreSQL
-                </h3>
-                <button onclick="cerrarModal('modalCrear')" class="text-[#C1C0C2] hover:text-white">&times;</button>
+    <!-- Footer Discreto -->
+    <footer class="border-t border-[#202633] bg-[#0f1218] py-4 mt-auto">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-500">
+            <div>
+                <span>&copy; 2026 Alquimia Cloud Platform. Microservicios sobre Kubernetes.</span>
             </div>
-            <form id="formCrear" onsubmit="guardarServicio(event)" class="space-y-3 text-xs">
+
+            <div class="flex items-center gap-3">
+                <span class="mono text-[11px] text-gray-400">Pod: <strong class="text-gray-300">${podName}</strong></span>
+                <button onclick="document.getElementById('diagModal').classList.remove('hidden')" class="text-cyan-400 hover:underline mono text-[11px] flex items-center gap-1">
+                    <i class="fa-solid fa-circle-info"></i>
+                    <span>Diagnóstico de Entorno</span>
+                </button>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Modal: Registrar Nuevo Servicio -->
+    <div id="serviceModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="card-surface rounded-2xl max-w-md w-full p-6 shadow-2xl border border-[#202633] space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-[#202633]">
+                <h3 class="text-base font-bold text-white">Registrar Nuevo Microservicio</h3>
+                <button onclick="cerrarModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <form id="newServiceForm" onsubmit="guardarServicio(event)" class="space-y-3.5 text-xs">
                 <div>
-                    <label class="block text-[#C1C0C2] mono uppercase mb-1">Nombre del Servicio / API</label>
-                    <input type="text" id="crear_nombre" required placeholder="Ej: Notification Worker (SNS)" class="w-full bg-[#121417] border border-[#282d37] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#8A9DB1]">
+                    <label class="block font-medium text-gray-300 mb-1">Nombre del Servicio</label>
+                    <input type="text" id="formNombre" required placeholder="Ej. Notification Mailer Service"
+                        class="w-full bg-[#101217] border border-[#202633] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
                 </div>
+
                 <div>
-                    <label class="block text-[#C1C0C2] mono uppercase mb-1">Tipo de Servicio</label>
-                    <select id="crear_tipo" class="w-full bg-[#121417] border border-[#282d37] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#8A9DB1]">
-                        <option value="Microservicio">Microservicio REST</option>
+                    <label class="block font-medium text-gray-300 mb-1">Tipo / Categoría</label>
+                    <select id="formTipo" class="w-full bg-[#101217] border border-[#202633] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
+                        <option value="Microservicio">Microservicio</option>
+                        <option value="API REST">API REST</option>
                         <option value="Worker">Worker en Cola</option>
-                        <option value="Networking">API Gateway / Ingress</option>
-                        <option value="Base de Datos">Base de Datos / Cache</option>
                         <option value="Serverless">Función Serverless</option>
+                        <option value="Networking">Networking / Gateway</option>
+                        <option value="Base de Datos">Base de Datos</option>
                     </select>
                 </div>
+
                 <div>
-                    <label class="block text-[#C1C0C2] mono uppercase mb-1">Estado</label>
-                    <select id="crear_estado" class="w-full bg-[#121417] border border-[#282d37] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#8A9DB1]">
+                    <label class="block font-medium text-gray-300 mb-1">Estado Inicial</label>
+                    <select id="formEstado" class="w-full bg-[#101217] border border-[#202633] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
                         <option value="Activo">Activo</option>
                         <option value="En espera">En espera</option>
                         <option value="Mantenimiento">Mantenimiento</option>
                     </select>
                 </div>
-                <div class="flex justify-end gap-2 pt-2">
-                    <button type="button" onclick="cerrarModal('modalCrear')" class="px-4 py-2 rounded-xl border border-[#282d37] text-[#C1C0C2] hover:bg-[#282d37]">Cancelar</button>
-                    <button type="submit" class="px-4 py-2 rounded-xl bg-[#8A9DB1] hover:bg-[#9ab0c5] text-[#121417] font-bold">Crear Servicio</button>
+
+                <div class="pt-3 flex justify-end gap-2 border-t border-[#202633]">
+                    <button type="button" onclick="cerrarModal()" class="px-4 py-2 rounded-xl text-gray-400 hover:text-white bg-[#1c212c]">Cancelar</button>
+                    <button type="submit" class="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-gray-950 font-bold transition">Registrar Servicio</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- Modal Editar Servicio -->
-    <div id="modalEditar" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
-        <div class="card-glass rounded-2xl max-w-md w-full p-6 shadow-2xl border border-[#282d37] space-y-4">
-            <div class="flex items-center justify-between border-b border-[#282d37] pb-3">
-                <h3 class="text-base font-bold text-white flex items-center gap-2">
-                    <i class="fa-solid fa-pen-to-square text-[#ECC5C6]"></i> Modificar Microservicio
-                </h3>
-                <button onclick="cerrarModal('modalEditar')" class="text-[#C1C0C2] hover:text-white">&times;</button>
+    <!-- Modal: Diagnóstico de Entorno (Revisión Docente) -->
+    <div id="diagModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="card-surface rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-[#202633] space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-[#202633]">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-server text-cyan-400"></i>
+                    <h3 class="text-sm font-bold text-white">Diagnóstico de Entorno (PaaS Inquilino Alquimia)</h3>
+                </div>
+                <button onclick="document.getElementById('diagModal').classList.add('hidden')" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <form id="formEditar" onsubmit="actualizarServicio(event)" class="space-y-3 text-xs">
-                <input type="hidden" id="edit_id">
-                <div>
-                    <label class="block text-[#C1C0C2] mono uppercase mb-1">Nombre del Servicio / API</label>
-                    <input type="text" id="edit_nombre" required class="w-full bg-[#121417] border border-[#282d37] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#ECC5C6]">
+
+            <div class="space-y-3 text-xs mono">
+                <div class="p-3 bg-[#0a0c10] rounded-xl border border-[#202633] space-y-2">
+                    <div class="text-[11px] text-gray-400 uppercase font-bold border-b border-[#202633] pb-1">Variables de Entorno (Zero-Trust):</div>
+                    <div class="flex justify-between"><span>DB_HOST:</span><strong class="text-white">${dbConfig.host}</strong></div>
+                    <div class="flex justify-between"><span>DB_PORT:</span><strong class="text-white">${dbConfig.port}</strong></div>
+                    <div class="flex justify-between"><span>DB_NAME:</span><strong class="text-white">${dbConfig.database}</strong></div>
+                    <div class="flex justify-between"><span>DB_USER:</span><strong class="text-white">${dbConfig.user}</strong></div>
+                    <div class="flex justify-between"><span>DB_PASSWORD:</span><strong class="text-cyan-400">•••••••••••• (Inyectada en secreto K8s)</strong></div>
                 </div>
-                <div>
-                    <label class="block text-[#C1C0C2] mono uppercase mb-1">Tipo de Servicio</label>
-                    <select id="edit_tipo" class="w-full bg-[#121417] border border-[#282d37] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#ECC5C6]">
-                        <option value="Microservicio">Microservicio REST</option>
-                        <option value="Worker">Worker en Cola</option>
-                        <option value="Networking">API Gateway / Ingress</option>
-                        <option value="Base de Datos">Base de Datos / Cache</option>
-                        <option value="Serverless">Función Serverless</option>
-                    </select>
+
+                <div class="p-3 bg-[#0a0c10] rounded-xl border border-[#202633] space-y-1.5">
+                    <div class="text-[11px] text-gray-400 uppercase font-bold border-b border-[#202633] pb-1">Orquestación & Pod:</div>
+                    <div class="flex justify-between"><span>Pod Hostname:</span><span class="text-emerald-400">${podName}</span></div>
+                    <div class="flex justify-between"><span>Runtime:</span><span class="text-white">Node.js 20 (Express)</span></div>
+                    <div class="flex justify-between"><span>Motor BD:</span><span class="text-white">PostgreSQL 15</span></div>
                 </div>
-                <div>
-                    <label class="block text-[#C1C0C2] mono uppercase mb-1">Estado</label>
-                    <select id="edit_estado" class="w-full bg-[#121417] border border-[#282d37] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#ECC5C6]">
-                        <option value="Activo">Activo</option>
-                        <option value="En espera">En espera</option>
-                        <option value="Mantenimiento">Mantenimiento</option>
-                    </select>
-                </div>
-                <div class="flex justify-end gap-2 pt-2">
-                    <button type="button" onclick="cerrarModal('modalEditar')" class="px-4 py-2 rounded-xl border border-[#282d37] text-[#C1C0C2] hover:bg-[#282d37]">Cancelar</button>
-                    <button type="submit" class="px-4 py-2 rounded-xl bg-[#ECC5C6] hover:bg-[#ffd9da] text-[#121417] font-bold">Guardar Cambios</button>
-                </div>
-            </form>
+            </div>
+
+            <div class="pt-2 flex justify-end">
+                <button onclick="document.getElementById('diagModal').classList.add('hidden')" class="px-4 py-2 rounded-xl bg-gray-800 text-gray-200 text-xs">Cerrar</button>
+            </div>
         </div>
     </div>
 
     <script>
-        let serviciosActuales = [];
+        let serviciosCache = [];
 
         async function cargarServicios() {
             try {
                 const res = await fetch('/api/servicios');
                 const json = await res.json();
-                serviciosActuales = json.data || [];
-                document.getElementById('jsonViewer').innerText = JSON.stringify(json, null, 2);
+                serviciosCache = json.data || [];
                 renderizarTabla();
+                actualizarEstadisticas();
             } catch (err) {
-                document.getElementById('serviciosTbody').innerHTML = \`
-                    <tr><td colspan="6" class="py-8 text-center text-rose-400 mono">
-                        Error al consultar /api/servicios: \${err.message}
-                    </td></tr>\`;
+                console.error(err);
             }
         }
 
+        async function verificarSalud() {
+            try {
+                const res = await fetch('/api/health');
+                const json = await res.json();
+                if (json.database && json.database.latency_ms !== undefined) {
+                    document.getElementById('statLatency').innerText = json.database.latency_ms + ' ms';
+                }
+            } catch (err) {}
+        }
+
         function renderizarTabla() {
-            const tbody = document.getElementById('serviciosTbody');
-            if (serviciosActuales.length === 0) {
-                tbody.innerHTML = \`
-                    <tr><td colspan="6" class="py-8 text-center text-[#C1C0C2] mono">
-                        No hay servicios registrados en la base de datos PostgreSQL.
-                    </td></tr>\`;
+            const tbody = document.getElementById('servicesTableBody');
+            if (!serviciosCache.length) {
+                tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-500">No hay microservicios registrados.</td></tr>';
                 return;
             }
 
-            tbody.innerHTML = serviciosActuales.map(s => {
-                let badgeClass = 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-                if (s.estado === 'En espera') badgeClass = 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
-                if (s.estado === 'Mantenimiento') badgeClass = 'bg-rose-500/20 text-rose-400 border border-rose-500/30';
+            tbody.innerHTML = serviciosCache.map(s => {
+                let badgeClass = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25';
+                let dotClass = 'bg-emerald-400';
+                if (s.estado === 'En espera') {
+                    badgeClass = 'bg-amber-500/10 text-amber-400 border-amber-500/25';
+                    dotClass = 'bg-amber-400';
+                } else if (s.estado === 'Mantenimiento') {
+                    badgeClass = 'bg-rose-500/10 text-rose-400 border-rose-500/25';
+                    dotClass = 'bg-rose-400';
+                }
 
                 return \`
-                    <tr class="hover:bg-[#1c2026] transition">
-                        <td class="py-3 px-4 mono text-xs text-[#C1C0C2]">#\${s.id}</td>
+                    <tr class="table-row-hover transition">
+                        <td class="py-3 px-4 mono text-gray-400">#\${s.id}</td>
                         <td class="py-3 px-4 font-semibold text-white">\${s.nombre}</td>
                         <td class="py-3 px-4">
-                            <span class="badge-pill bg-[#282d37] text-[#8A9DB1] border border-[#282d37]/80">\${s.tipo}</span>
+                            <span class="px-2 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700 text-[10px] font-mono">\${s.tipo}</span>
                         </td>
                         <td class="py-3 px-4">
-                            <span class="badge-pill \${badgeClass}">\${s.estado}</span>
+                            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border \${badgeClass}">
+                                <span class="w-1.5 h-1.5 rounded-full \${dotClass}"></span> \${s.estado}
+                            </span>
                         </td>
-                        <td class="py-3 px-4 mono text-xs text-[#C1C0C2]">\${(s.creado_en || '').substring(0, 16)}</td>
-                        <td class="py-3 px-4 text-right">
-                            <div class="flex items-center justify-end gap-1.5">
-                                <button onclick="abrirModalEditar(\${s.id})" class="bg-[#121417] hover:bg-[#282d37] text-[#8A9DB1] p-1.5 rounded-lg border border-[#282d37] transition" title="Editar">
-                                    <i class="fa-solid fa-pen-to-square text-xs"></i>
-                                </button>
-                                <button onclick="eliminarServicio(\${s.id})" class="bg-[#121417] hover:bg-rose-950/50 text-rose-400 p-1.5 rounded-lg border border-[#282d37] transition" title="Eliminar">
-                                    <i class="fa-solid fa-trash-can text-xs"></i>
-                                </button>
-                            </div>
+                        <td class="py-3 px-4 text-right space-x-2">
+                            <button onclick="alternarEstado(\${s.id}, '\${s.estado}')" class="text-gray-400 hover:text-cyan-400 text-xs px-2 py-1 rounded bg-[#181c26] border border-[#202633]" title="Cambiar Estado">
+                                <i class="fa-solid fa-power-off"></i>
+                            </button>
+                            <button onclick="eliminarServicio(\${s.id})" class="text-gray-400 hover:text-rose-400 text-xs px-2 py-1 rounded bg-[#181c26] border border-[#202633]" title="Eliminar">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
                         </td>
                     </tr>
                 \`;
             }).join('');
         }
 
-        async function guardarServicio(e) {
-            e.preventDefault();
-            const data = {
-                nombre: document.getElementById('crear_nombre').value,
-                tipo: document.getElementById('crear_tipo').value,
-                estado: document.getElementById('crear_estado').value
-            };
-            await fetch('/api/servicios', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            cerrarModal('modalCrear');
-            document.getElementById('formCrear').reset();
-            cargarServicios();
+        function actualizarEstadisticas() {
+            document.getElementById('statTotal').innerText = serviciosCache.length;
+            const activos = serviciosCache.filter(s => s.estado === 'Activo').length;
+            document.getElementById('statActive').innerText = activos;
         }
 
-        function abrirModalEditar(id) {
-            const s = serviciosActuales.find(x => x.id === id);
-            if (!s) return;
-            document.getElementById('edit_id').value = s.id;
-            document.getElementById('edit_nombre').value = s.nombre;
-            document.getElementById('edit_tipo').value = s.tipo;
-            document.getElementById('edit_estado').value = s.estado;
-            document.getElementById('modalEditar').classList.remove('hidden');
-        }
-
-        async function actualizarServicio(e) {
-            e.preventDefault();
-            const id = document.getElementById('edit_id').value;
-            const data = {
-                nombre: document.getElementById('edit_nombre').value,
-                tipo: document.getElementById('edit_tipo').value,
-                estado: document.getElementById('edit_estado').value
-            };
-            await fetch(\`/api/servicios/\${id}\`, {
+        async function alternarEstado(id, actual) {
+            const nuevo = actual === 'Activo' ? 'En espera' : 'Activo';
+            await fetch('/api/servicios/' + id, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: JSON.stringify({ estado: nuevo })
             });
-            cerrarModal('modalEditar');
             cargarServicios();
         }
 
         async function eliminarServicio(id) {
-            if (!confirm(\`¿Confirma eliminar el microservicio #\${id}?\`)) return;
-            await fetch(\`/api/servicios/\${id}\`, { method: 'DELETE' });
+            if (!confirm('¿Eliminar el microservicio #' + id + '?')) return;
+            await fetch('/api/servicios/' + id, { method: 'DELETE' });
             cargarServicios();
         }
 
-        async function restablecerSeed() {
-            if (!confirm('¿Restablecer microservicios al seed inicial?')) return;
-            await fetch('/api/servicios/seed', { method: 'POST' });
+        async function guardarServicio(e) {
+            e.preventDefault();
+            const nombre = document.getElementById('formNombre').value;
+            const tipo = document.getElementById('formTipo').value;
+            const estado = document.getElementById('formEstado').value;
+
+            await fetch('/api/servicios', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nombre, tipo, estado })
+            });
+
+            cerrarModal();
+            document.getElementById('newServiceForm').reset();
             cargarServicios();
         }
 
-        function toggleJsonView() {
-            document.getElementById('jsonContainer').classList.toggle('hidden');
-        }
-
-        function abrirModalCrear() {
-            document.getElementById('modalCrear').classList.remove('hidden');
-        }
-
-        function abrirModalEstres() {
-            document.getElementById('modalEstres').classList.remove('hidden');
-            document.getElementById('estresBar').style.width = '0%';
-            document.getElementById('estresCount').innerText = '0 / 60';
-            document.getElementById('estresStatus').innerText = 'Listo para iniciar ráfaga...';
-            document.getElementById('btnLanzarEstres').disabled = false;
-        }
-
-        function cerrarModalEstres() {
-            document.getElementById('modalEstres').classList.add('hidden');
-        }
-
-        async function dispararCargaEstres() {
-            const btn = document.getElementById('btnLanzarEstres');
-            btn.disabled = true;
-            document.getElementById('estresStatus').innerText = '⚡ Inyectando ráfaga concurrente a los pods...';
-            const total = 60;
-            let completadas = 0;
-            const promesas = [];
-
-            for (let i = 0; i < total; i++) {
-                promesas.push(
-                    fetch('/api/stress')
-                        .then(r => r.json())
-                        .catch(() => ({}))
-                        .finally(() => {
-                            completadas++;
-                            const pct = Math.round((completadas / total) * 100);
-                            document.getElementById('estresBar').style.width = pct + '%';
-                            document.getElementById('estresCount').innerText = completadas + ' / ' + total;
-                        })
-                );
+        async function probarEndpoint(url, method) {
+            const out = document.getElementById('apiConsoleOutput');
+            out.innerText = '// Enviando ' + method + ' ' + url + '...';
+            try {
+                const res = await fetch(url);
+                const json = await res.json();
+                out.innerText = JSON.stringify(json, null, 2);
+            } catch (err) {
+                out.innerText = '// Error: ' + err.message;
             }
-
-            await Promise.all(promesas);
-            document.getElementById('estresStatus').innerText = '✅ Ráfaga completada. Carga de CPU inyectada con éxito.';
-            btn.disabled = false;
         }
 
-        // Carga inicial
-        cargarServicios();
-    </script>
+        async function restablecerDemo() {
+            if (!confirm('¿Restablecer microservicios de prueba en PostgreSQL?')) return;
+            await fetch('/api/seed', { method: 'POST' });
+            cargarServicios();
+        }
 
-    <!-- Modal Simulación de Carga / Estrés HPA -->
-    <div id="modalEstres" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="card-glass rounded-2xl max-w-md w-full p-6 border border-[#282d37] space-y-4">
-            <div class="flex items-center justify-between border-b border-[#282d37] pb-3">
-                <h3 class="text-base font-bold text-white flex items-center gap-2">
-                    <i class="fa-solid fa-bolt-lightning text-amber-400"></i> Generador de Carga CPU / Tráfico
-                </h3>
-                <button type="button" onclick="cerrarModalEstres()" class="text-[#C1C0C2] hover:text-white"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <p class="text-xs text-[#C1C0C2] leading-relaxed">
-                Este módulo dispara ráfagas de cálculo concurrentes a los pods de Node.js en Kubernetes para forzar el aumento de carga de CPU y disparar el escalado horizontal (HPA) visible en Grafana.
-            </p>
-            <div class="bg-[#121417] p-3.5 rounded-xl border border-[#282d37] space-y-2">
-                <div class="flex justify-between text-xs mono">
-                    <span id="estresStatus" class="text-white">Listo para iniciar ráfaga...</span>
-                    <span id="estresCount" class="text-[#8A9DB1] font-bold">0 / 60</span>
-                </div>
-                <div class="w-full bg-[#181b20] h-2.5 rounded-full overflow-hidden border border-[#282d37]">
-                    <div id="estresBar" class="bg-gradient-to-r from-amber-400 via-rose-400 to-[#ECC5C6] h-full transition-all duration-300" style="width: 0%"></div>
-                </div>
-            </div>
-            <div class="flex justify-end gap-2 pt-2">
-                <button type="button" onclick="cerrarModalEstres()" class="px-4 py-2 rounded-xl border border-[#282d37] text-xs mono text-[#C1C0C2] hover:bg-[#282d37]">Cerrar</button>
-                <button id="btnLanzarEstres" type="button" onclick="dispararCargaEstres()" class="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-[#121417] font-bold text-xs mono flex items-center gap-1.5 transition">
-                    <i class="fa-solid fa-play"></i> Iniciar Ráfaga (60 reqs)
-                </button>
-            </div>
-        </div>
-    </div>
+        function abrirModalNuevo() {
+            document.getElementById('serviceModal').classList.remove('hidden');
+        }
+
+        function cerrarModal() {
+            document.getElementById('serviceModal').classList.add('hidden');
+        }
+
+        window.onload = function() {
+            cargarServicios();
+            verificarSalud();
+            setInterval(verificarSalud, 8000);
+        };
     </script>
 </body>
 </html>`;
@@ -666,5 +630,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log(`🚀 [PaaS Node API] Servidor activo escuchando en http://0.0.0.0:${port}`);
+    console.log(`🚀 [Alquimia Cloud] API Server activo en el puerto ${port}`);
 });
