@@ -10,11 +10,12 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Cabeceras de auditoría tecnológica para Wappalyzer
+// Cabeceras de auditoría tecnológica para Wappalyzer (Express & Node.js)
 app.use((req, res, next) => {
-    res.setHeader('X-Powered-By', 'Express / Node.js 20');
+    res.setHeader('X-Powered-By', 'Express');
     res.setHeader('X-PaaS-Tenant', 'alquimia');
     res.setHeader('X-PaaS-Architecture', 'Cloud-Native Micro-K8s');
+    res.setHeader('Set-Cookie', 'connect.sid=s%3Aalquimia-node20-session-token.paas; Path=/; HttpOnly');
     next();
 });
 
@@ -203,6 +204,8 @@ app.get('/', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="Express">
+    <meta name="application-name" content="Node.js Express API Platform">
     <title>Alquimia Cloud | Hub de Microservicios</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
