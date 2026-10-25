@@ -44,6 +44,19 @@ async function initDatabase() {
                 creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+        // Asegurar que los microservicios iniciales siempre estén presentes
+        const countRes = await pool.query('SELECT COUNT(*) AS c FROM servicios_cloud;');
+        if (parseInt(countRes.rows[0].c, 10) === 0) {
+            await pool.query(`
+                INSERT INTO servicios_cloud (nombre, tipo, estado) VALUES 
+                ('Auth Service (JWT)', 'Microservicio', 'Activo'),
+                ('Queue Worker Redis', 'Worker', 'En espera'),
+                ('API Gateway Ingress', 'Networking', 'Activo'),
+                ('PostgreSQL Read Replica', 'Base de Datos', 'Activo'),
+                ('Payment Webhook Processor', 'Serverless', 'Mantenimiento');
+            `);
+            console.log('🌱 [PostgreSQL] Microservicios iniciales cargados automáticamente.');
+        }
         console.log('✅ [PostgreSQL] Tabla "servicios_cloud" verificada y lista.');
     } catch (err) {
         console.error('⚠️ [PostgreSQL] Error al inicializar tabla:', err.message);
@@ -216,6 +229,37 @@ app.get('/', (req, res) => {
         .card-surface { background-color: #14171f; border: 1px solid #202633; }
         .card-surface:hover { border-color: #2e3648; }
         .table-row-hover:hover { background-color: #181c26; }
+
+        /* Corrección de contraste y visibilidad de inputs */
+        input, select, textarea {
+            background-color: #101217 !important;
+            color: #FFFFFF !important;
+            border: 1px solid #383F4D !important;
+            -webkit-text-fill-color: #FFFFFF !important;
+        }
+        input:focus, select:focus, textarea:focus {
+            background-color: #161A22 !important;
+            color: #FFFFFF !important;
+            outline: none !important;
+            border-color: #06B6D4 !important;
+            box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.3) !important;
+            -webkit-text-fill-color: #FFFFFF !important;
+        }
+        input::placeholder, textarea::placeholder {
+            color: #64748B !important;
+            -webkit-text-fill-color: #64748B !important;
+        }
+        option {
+            background-color: #101217 !important;
+            color: #FFFFFF !important;
+        }
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover, 
+        input:-webkit-autofill:focus, 
+        input:-webkit-autofill:active {
+            -webkit-box-shadow: 0 0 0 30px #101217 inset !important;
+            -webkit-text-fill-color: #FFFFFF !important;
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -373,17 +417,9 @@ app.get('/', (req, res) => {
                         </button>
                     </div>
 
-                    <!-- Consola de Respuesta JSON en Vivo -->
                     <div class="space-y-1">
                         <span class="text-[10px] text-gray-400 mono">Respuesta en Vivo (Status 200 OK):</span>
                         <pre id="apiConsoleOutput" class="p-3 bg-[#0a0c10] border border-[#202633] rounded-xl text-[11px] mono text-cyan-300 overflow-x-auto max-h-56 leading-relaxed">// Haz clic en uno de los endpoints para consultar en vivo...</pre>
-                    </div>
-
-                    <div class="pt-2">
-                        <button onclick="restablecerDemo()" class="w-full bg-[#181c26] hover:bg-[#202634] text-gray-400 hover:text-white border border-[#202633] py-2 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
-                            <i class="fa-solid fa-rotate-left"></i>
-                            <span>Restablecer Servicios Demo</span>
-                        </button>
                     </div>
                 </div>
             </div>
@@ -421,12 +457,15 @@ app.get('/', (req, res) => {
                 <div>
                     <label class="block font-medium text-gray-300 mb-1">Nombre del Servicio</label>
                     <input type="text" id="formNombre" required placeholder="Ej. Notification Mailer Service"
-                        class="w-full bg-[#101217] border border-[#202633] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
+                        style="background-color: #101217 !important; color: #FFFFFF !important; border: 1px solid #383F4D !important;"
+                        class="w-full rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
                 </div>
 
                 <div>
                     <label class="block font-medium text-gray-300 mb-1">Tipo / Categoría</label>
-                    <select id="formTipo" class="w-full bg-[#101217] border border-[#202633] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
+                    <select id="formTipo" 
+                        style="background-color: #101217 !important; color: #FFFFFF !important; border: 1px solid #383F4D !important;"
+                        class="w-full rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
                         <option value="Microservicio">Microservicio</option>
                         <option value="API REST">API REST</option>
                         <option value="Worker">Worker en Cola</option>
@@ -438,7 +477,9 @@ app.get('/', (req, res) => {
 
                 <div>
                     <label class="block font-medium text-gray-300 mb-1">Estado Inicial</label>
-                    <select id="formEstado" class="w-full bg-[#101217] border border-[#202633] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
+                    <select id="formEstado" 
+                        style="background-color: #101217 !important; color: #FFFFFF !important; border: 1px solid #383F4D !important;"
+                        class="w-full rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500">
                         <option value="Activo">Activo</option>
                         <option value="En espera">En espera</option>
                         <option value="Mantenimiento">Mantenimiento</option>
